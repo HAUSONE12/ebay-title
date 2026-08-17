@@ -30,9 +30,21 @@ DANGLING_WORDS = {
     "eine", "einer", "einem", "einen",
 }
 
+DESCRIPTION_BAD_WORDS = {
+    "ist", "sind", "war", "wird", "werden", "hat", "haben", "kann", "können", "koennen",
+    "bietet", "bieten", "vereint", "ermöglicht", "ermoeglicht", "eignet", "geeignet",
+    "verfügt", "verfuegt", "sorgt", "besteht", "zeichnet",
+}
+
+MATERIAL_TERMS = {
+    "stahl", "edelstahl", "aluminium", "alu", "kunststoff", "polypropylen", "polyacryl",
+    "polyester", "leder", "holz", "gummi", "metall", "messing", "kupfer", "zink",
+    "schaumstoff", "nylon", "textil", "baumwolle", "glasfaser", "carbon",
+}
+
 SKIP_LABELS = {
     "geeignet für", "geeignet fuer", "einsatzbereich", "anwendung", "beschreibung",
-    "hinweis", "hinweise", "lieferumfang", "verwendung",
+    "hinweis", "hinweise", "lieferumfang", "verwendung", "weite",
 }
 
 LABEL_PRIORITIES = {
@@ -65,7 +77,7 @@ LABEL_PRIORITIES = {
 KNOWN_LABEL_PATTERN = re.compile(
     r"(?i)(?<!\w)("
     r"Geeignet\s+für|Geeignet\s+fuer|Einsatzbereich|Anwendung|Beschreibung|Hinweise?|"
-    r"Lieferumfang|Verwendung|Material|Werkstoff|Farbe|Norm|Schutzklasse|Sicherheitsklasse|"
+    r"Lieferumfang|Verwendung|Weite|Material|Werkstoff|Farbe|Norm|Schutzklasse|Sicherheitsklasse|"
     r"Gewicht|Kopfgewicht|Größe|Groesse|Maße|Masse|Abmessungen|Länge|Laenge|Breite|Höhe|Hoehe|"
     r"Durchmesser|Oberfläche|Oberflaeche|Ausführung|Ausfuehrung|Inhalt"
     r")\s*:"
@@ -186,9 +198,12 @@ def source_segments(source: str) -> list[str]:
 
 
 def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[int, int, str]]:
-    """Yield (priority, source_order, phrase) without prose or UI-style labels."""
+    """Yield (priority, source_order, phrase) while rejecting prose and ambiguous fragments."""
     order = 0
-    for source_priority, source in ((10, technical_data), (0, description)):
+    for source_kind, source_priority, source in (
+        ("technical", 10, technical_data),
+        ("description", 0, description),
+    ):
         for raw_segment in source_segments(source):
             order += 1
             segment = normalize_title_chars(raw_segment)
@@ -204,6 +219,11 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
 
             if label in SKIP_LABELS:
                 continue
+            if label and label not in LABEL_PRIORITIES:
+                continue
+            if source_kind == "technical" and not label:
+                # Unlabelled table values caused naked numbers such as "75 70 293 320".
+                continue
 
             value = clean_candidate_value(value)
             if not value:
@@ -213,11 +233,14 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
             if not words:
                 continue
 
-            # Description prose is not title material. Keep short bullet-like phrases only.
-            if not label and len(words) > 6:
-                continue
-            if not label and raw_segment.strip().endswith((".", "!", "?")) and len(words) > 4:
-                continue
+            if source_kind == "description" and not label:
+                # Only short bullet-like feature phrases, never sentence fragments.
+                if len(words) < 2 or len(words) > 4:
+                    continue
+                if raw_segment.strip().endswith((".", "!", "?")):
+                    continue
+                if any(token_key(word) in DESCRIPTION_BAD_WORDS for word in words):
+                    continue
 
             # Structured fields can be a little longer, but never paste a sentence into Name 2.
             if label and len(words) > 6:
@@ -229,8 +252,20 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
             if label == "inhalt" and not re.search(r"\d", value):
                 continue
 
+            # A naked number is not useful without its unit or context.
+            if re.fullmatch(r"\d+(?:[.,]\d+)?", value):
+                continue
+
+            if label in {"breite", "höhe", "hoehe", "länge", "laenge", "durchmesser", "maße", "masse", "abmessungen", "größe", "groesse"}:
+                if re.fullmatch(r"[\d\s.,xX+/-]+", value):
+                    continue
+
+            if label in {"material", "werkstoff"} and len(words) == 1:
+                if token_key(words[0]) not in MATERIAL_TERMS:
+                    continue
+
             phrase = " ".join(words)
-            priority = source_priority + LABEL_PRIORITIES.get(label, 50 if label else 45)
+            priority = source_priority + LABEL_PRIORITIES.get(label, 45)
             yield priority, order, phrase
 
 
@@ -250,18 +285,19 @@ def build_ebay_title(name1: str, description: str = "", technical_data: str = ""
 
     candidates = sorted(candidate_segments(technical_data, description), key=lambda x: (-x[0], x[1]))
     added = 0
-    for _priority, _order, phrase in candidates:
+    for priority, _order, phrase in candidates:
+        # Unlabelled description phrases are low priority and only enrich genuinely short names.
+        if priority <= 45 and len(base) >= 55:
+            continue
+
         phrase_words = phrase.split()
         novel_words = [w for w in phrase_words if token_key(w) and token_key(w) not in seen]
         if not novel_words:
             continue
 
-        # Avoid turning a meaningful phrase into an orphaned connector/label fragment.
         novel_phrase = strip_dangling_end(" ".join(novel_words))
         if not novel_phrase:
             continue
-
-        # Very long prose fragments are deliberately skipped instead of partially clipped.
         if len(novel_phrase.split()) > 6:
             continue
 
