@@ -1,10 +1,10 @@
-# NORD WEST Shopify Name 1 Automation
+# NORD WEST Shopify Title Automation
 
-This repository rewrites plentyONE **Name 1** for products with positive physical stock in the **NORD WEST** warehouse (`warehouseId=128`). The goal is to avoid copying the NORD WEST source title verbatim into Shopify while keeping every added fact grounded in the product data.
+This repository rewrites plentyONE **Name 1 and Name 2 with the same generated title** for products with positive physical stock in the **NORD WEST** warehouse (`warehouseId=128`). The goal is to avoid copying the NORD WEST source title verbatim into Shopify while keeping every added fact grounded in the product data.
 
 The new German title is built from:
 
-- current Name 1 (`name`) as the source title
+- current Name 1 (`name`) as the NORD WEST source title
 - Artikeltext (`description`)
 - Technische Daten (`technicalData`)
 
@@ -18,8 +18,8 @@ The generator removes HTML and marketing noise, prefers structured facts such as
 4. Sort Artikel-IDs ascending and skip IDs already covered by `state/last_processed.json`.
 5. Read German Name 1, article text and technical data from the first stocked variation of each article.
 6. Build a differentiated Shopify title from those source fields.
-7. Update the German `name` field (**Name 1**) only when a safe rewritten title exists.
-8. Read the item text back from plentyONE and verify the stored Name 1 before advancing the checkpoint.
+7. Write that exact same title to both `name` (**Name 1**) and `name2` (**Name 2**).
+8. Read the item text back from plentyONE and verify that Name 1 and Name 2 both equal the generated title before advancing the checkpoint.
 9. Save the last handled Artikel-ID. GitHub Actions commits that checkpoint after each live run.
 
 > The checkpoint remains Artikel-ID based. Older IDs are not revisited unless the checkpoint is intentionally reset.
@@ -36,12 +36,12 @@ Never commit credentials, tokens, or passwords.
 
 ## Manual preview
 
-Go to **Actions -> Daily Shopify Name 1 -> Run workflow** and use:
+Go to **Actions -> Daily Shopify Name 1 + Name 2 -> Run workflow** and use:
 
 - `dry_run = true`
 - `max_items = 20`
 
-Dry-run mode prints the source Name 1 and proposed rewritten Name 1 without changing plentyONE or the checkpoint. After reviewing the proposals, run again with `dry_run = false`.
+Dry-run mode prints the NORD WEST source Name 1 and the proposed title that would be written identically to Name 1 and Name 2, without changing plentyONE or the checkpoint. After reviewing the proposals, run again with `dry_run = false`.
 
 The scheduled run executes daily at **03:30 UTC**.
 
