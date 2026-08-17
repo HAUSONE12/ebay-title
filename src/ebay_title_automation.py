@@ -378,6 +378,7 @@ def build_shopify_title(name1: str, description: str = "", technical_data: str =
     additions: list[str] = []
     addition_keys: set[str] = set()
     long_base = len(base) >= 70
+    unit_keys = {"mm", "cm", "m", "g", "kg", "ml", "l", "v", "w"}
 
     for priority, _order, phrase in candidates:
         if long_base and priority < 80:
@@ -390,6 +391,12 @@ def build_shopify_title(name1: str, description: str = "", technical_data: str =
             continue
 
         novel_words = [word for word in phrase_words if token_key(word) and token_key(word) not in known_keys]
+        phrase_has_unit = any(token_key(word) in unit_keys for word in phrase_words)
+        novel_has_unit = any(token_key(word) in unit_keys for word in novel_words)
+        if re.search(r"\d", phrase) and phrase_has_unit and not novel_has_unit:
+            # Keep the full dimension/weight phrase so de-duplication never leaves an orphan number.
+            novel_words = phrase_words
+
         if priority <= 50 and len(novel_words) < 2:
             continue
 
