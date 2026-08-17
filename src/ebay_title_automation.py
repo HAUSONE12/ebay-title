@@ -24,6 +24,53 @@ NOISE_WORDS = {
     "neu", "top", "angebot", "sale", "original", "qualität", "qualitaet",
 }
 
+DANGLING_WORDS = {
+    "mit", "und", "oder", "für", "fuer", "aus", "von", "im", "in", "am", "an",
+    "auf", "zu", "zur", "zum", "der", "die", "das", "den", "dem", "des", "ein",
+    "eine", "einer", "einem", "einen",
+}
+
+SKIP_LABELS = {
+    "geeignet für", "geeignet fuer", "einsatzbereich", "anwendung", "beschreibung",
+    "hinweis", "hinweise", "lieferumfang", "verwendung",
+}
+
+LABEL_PRIORITIES = {
+    "gewicht": 100,
+    "kopfgewicht": 100,
+    "größe": 95,
+    "groesse": 95,
+    "maße": 95,
+    "masse": 95,
+    "abmessungen": 95,
+    "länge": 95,
+    "laenge": 95,
+    "breite": 95,
+    "höhe": 95,
+    "hoehe": 95,
+    "durchmesser": 95,
+    "material": 90,
+    "werkstoff": 90,
+    "norm": 88,
+    "schutzklasse": 88,
+    "sicherheitsklasse": 88,
+    "farbe": 80,
+    "oberfläche": 75,
+    "oberflaeche": 75,
+    "ausführung": 70,
+    "ausfuehrung": 70,
+    "inhalt": 55,
+}
+
+KNOWN_LABEL_PATTERN = re.compile(
+    r"(?i)(?<!\w)("
+    r"Geeignet\s+für|Geeignet\s+fuer|Einsatzbereich|Anwendung|Beschreibung|Hinweise?|"
+    r"Lieferumfang|Verwendung|Material|Werkstoff|Farbe|Norm|Schutzklasse|Sicherheitsklasse|"
+    r"Gewicht|Kopfgewicht|Größe|Groesse|Maße|Masse|Abmessungen|Länge|Laenge|Breite|Höhe|Hoehe|"
+    r"Durchmesser|Oberfläche|Oberflaeche|Ausführung|Ausfuehrung|Inhalt"
+    r")\s*:"
+)
+
 
 def clean_text(value: str | None) -> str:
     if not value:
@@ -42,18 +89,19 @@ def clean_text(value: str | None) -> str:
 def normalize_title_chars(value: str) -> str:
     replacements = {
         "®": "", "™": "", "©": "", "•": " ", "·": " ", "–": "-", "—": "-",
-        "„": '"', "“": '"', "”": '"', "’": "'",
+        "„": '"', "“": '"', "”": '"', "’": "'", "″": '"', "×": "x",
     }
     for old, new in replacements.items():
         value = value.replace(old, new)
-    # Keep common dimensions/model punctuation, remove decorative symbols.
-    value = re.sub(r"[^\wÄÖÜäöüß0-9%+./,:()'\"xX\- ]+", " ", value)
+    # Keep common model/dimension punctuation, remove decorative symbols.
+    value = re.sub(r"[^\wÄÖÜäöüßØø0-9%+./,:()'\"xX\- ]+", " ", value)
     value = re.sub(r"\s+", " ", value)
+    value = re.sub(r"\s+([,.:])", r"\1", value)
     return value.strip(" -|,;:")
 
 
 def token_key(token: str) -> str:
-    return re.sub(r"[^a-z0-9äöüß]", "", token.casefold())
+    return re.sub(r"[^a-z0-9äöüßø]", "", token.casefold())
 
 
 def useful_tokens(text: str) -> list[str]:
@@ -66,68 +114,170 @@ def useful_tokens(text: str) -> list[str]:
     return out
 
 
-def candidate_segments(technical_data: str, description: str) -> Iterable[str]:
-    for source in (technical_data, description):
-        cleaned = clean_text(source)
-        if not cleaned:
-            continue
-        # Split on common bullet/label boundaries while preserving measurements and model strings.
-        for segment in re.split(r"\s*\|\s*|\s*[;]\s*", cleaned):
-            segment = normalize_title_chars(segment)
-            segment = re.sub(r"^[\-:,]+\s*", "", segment)
-            if len(segment) < 2:
-                continue
-            # Long prose is less useful than concise feature phrases.
-            words = useful_tokens(segment)
-            if not words:
-                continue
-            if len(words) > 10:
-                words = words[:10]
-            candidate = " ".join(words)
-            if candidate:
-                yield candidate
+def strip_dangling_end(value: str) -> str:
+    words = value.split()
+    while words and token_key(words[-1]) in DANGLING_WORDS:
+        words.pop()
+    return " ".join(words).rstrip(" -|,;:")
 
 
-def build_ebay_title(name1: str, description: str = "", technical_data: str = "") -> str:
+def compact_name1(name1: str) -> str:
+    """Keep Name 1 authoritative, but shorten verbose field labels before clipping."""
     base = normalize_title_chars(clean_text(name1))
     if not base:
         return ""
 
-    # Name 1 is authoritative and always comes first.
-    if len(base) > EBAY_TITLE_LIMIT:
-        clipped = base[:EBAY_TITLE_LIMIT].rstrip()
-        if " " in clipped:
-            clipped = clipped.rsplit(" ", 1)[0]
-        return clipped[:EBAY_TITLE_LIMIT].rstrip()
+    replacements: list[tuple[str, str]] = [
+        (r"\bRollenbreite\s+(?=\d)", ""),
+        (r"\bBreite\s+(?=\d)", ""),
+        (r"\bFlorhöhe\s+(?=\d)", "Flor "),
+        (r"\bKern-?\s*Ø\s*(?=\d)", "Kern Ø"),
+        (r"\bBügellänge\s+(?=\d)", "Bügel "),
+        (r"\bBügel-?\s*Ø\s*(?=\d)", "Bügel Ø"),
+        (r"\bSchlüsselweiten\s+(?=\d)", "SW "),
+        (r"\bAnzahl\s+Zähne\s+(\d+)", r"\1 Zähne"),
+    ]
+    for pattern, replacement in replacements:
+        base = re.sub(pattern, replacement, base, flags=re.I)
+    base = re.sub(r"\s+", " ", base).strip()
+
+    if len(base) <= EBAY_TITLE_LIMIT:
+        return strip_dangling_end(base)
+
+    # eBay titles are search-oriented; connector words can be dropped when space is tight.
+    base = base.replace(",", " ")
+    words = [w for w in base.split() if token_key(w) not in DANGLING_WORDS]
+    compact = " ".join(words)
+    if len(compact) <= EBAY_TITLE_LIMIT:
+        return strip_dangling_end(compact)
+
+    selected: list[str] = []
+    for word in words:
+        proposal = " ".join(selected + [word])
+        if len(proposal) > EBAY_TITLE_LIMIT:
+            break
+        selected.append(word)
+    return strip_dangling_end(" ".join(selected))[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
+
+
+def normalize_label(label: str) -> str:
+    return re.sub(r"\s+", " ", normalize_title_chars(label).casefold()).strip()
+
+
+def clean_candidate_value(value: str) -> str:
+    value = normalize_title_chars(value).strip(" -|,;:")
+    words = value.split()
+    while words and token_key(words[0]) in DANGLING_WORDS:
+        words.pop(0)
+    while words and token_key(words[-1]) in DANGLING_WORDS:
+        words.pop()
+    return " ".join(words).rstrip(" .,-|;:")
+
+
+def source_segments(source: str) -> list[str]:
+    cleaned = clean_text(source)
+    if not cleaned:
+        return []
+    # Some plentyONE HTML tables flatten adjacent labels into one line. Insert a boundary
+    # before known labels so "Material: ... Norm: ..." becomes two candidates.
+    cleaned = KNOWN_LABEL_PATTERN.sub(lambda m: f" | {m.group(1)}:", cleaned)
+    return [seg.strip() for seg in re.split(r"\s*\|\s*|\s*;\s*", cleaned) if seg.strip()]
+
+
+def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[int, int, str]]:
+    """Yield (priority, source_order, phrase) without prose or UI-style labels."""
+    order = 0
+    for source_priority, source in ((10, technical_data), (0, description)):
+        for raw_segment in source_segments(source):
+            order += 1
+            segment = normalize_title_chars(raw_segment)
+            if not segment:
+                continue
+
+            label = ""
+            value = segment
+            if ":" in segment:
+                maybe_label, maybe_value = segment.split(":", 1)
+                label = normalize_label(maybe_label)
+                value = maybe_value
+
+            if label in SKIP_LABELS:
+                continue
+
+            value = clean_candidate_value(value)
+            if not value:
+                continue
+
+            words = useful_tokens(value)
+            if not words:
+                continue
+
+            # Description prose is not title material. Keep short bullet-like phrases only.
+            if not label and len(words) > 6:
+                continue
+            if not label and raw_segment.strip().endswith((".", "!", "?")) and len(words) > 4:
+                continue
+
+            # Structured fields can be a little longer, but never paste a sentence into Name 2.
+            if label and len(words) > 6:
+                continue
+
+            if label == "norm" and not re.search(r"\b(?:DIN|EN|ISO|VDE|S[1-7]|SRC|ESD)\b", value, re.I):
+                continue
+
+            if label == "inhalt" and not re.search(r"\d", value):
+                continue
+
+            phrase = " ".join(words)
+            priority = source_priority + LABEL_PRIORITIES.get(label, 50 if label else 45)
+            yield priority, order, phrase
+
+
+def build_ebay_title(name1: str, description: str = "", technical_data: str = "") -> str:
+    base = compact_name1(name1)
+    if not base:
+        return ""
+
+    # If Name 1 needed compaction, it already contains the highest-value information we can
+    # safely preserve under the 80-character limit. Do not append extra data.
+    raw_base = normalize_title_chars(clean_text(name1))
+    if len(raw_base) > EBAY_TITLE_LIMIT:
+        return base
 
     title_words = base.split()
     seen = {token_key(t) for t in title_words if token_key(t)}
 
-    for segment in candidate_segments(technical_data, description):
-        new_words: list[str] = []
-        local_seen: set[str] = set()
-        for word in segment.split():
-            key = token_key(word)
-            if not key or key in seen or key in local_seen:
-                continue
-            local_seen.add(key)
-            new_words.append(word)
-
-        if not new_words:
+    candidates = sorted(candidate_segments(technical_data, description), key=lambda x: (-x[0], x[1]))
+    added = 0
+    for _priority, _order, phrase in candidates:
+        phrase_words = phrase.split()
+        novel_words = [w for w in phrase_words if token_key(w) and token_key(w) not in seen]
+        if not novel_words:
             continue
 
-        # Add as many novel words as fit, preserving their source order.
-        for word in new_words:
-            proposal = " ".join(title_words + [word])
-            if len(proposal) > EBAY_TITLE_LIMIT:
-                break
-            title_words.append(word)
-            seen.add(token_key(word))
+        # Avoid turning a meaningful phrase into an orphaned connector/label fragment.
+        novel_phrase = strip_dangling_end(" ".join(novel_words))
+        if not novel_phrase:
+            continue
 
-        if len(" ".join(title_words)) >= EBAY_TITLE_LIMIT - 4:
+        # Very long prose fragments are deliberately skipped instead of partially clipped.
+        if len(novel_phrase.split()) > 6:
+            continue
+
+        proposal = f"{' '.join(title_words)} {novel_phrase}".strip()
+        if len(proposal) > EBAY_TITLE_LIMIT:
+            continue
+
+        title_words.extend(novel_phrase.split())
+        for word in novel_phrase.split():
+            key = token_key(word)
+            if key:
+                seen.add(key)
+        added += 1
+        if added >= 3 or len(" ".join(title_words)) >= EBAY_TITLE_LIMIT - 8:
             break
 
-    return " ".join(title_words)[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
+    return strip_dangling_end(" ".join(title_words))[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
 
 
 @dataclass(frozen=True)
