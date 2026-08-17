@@ -65,6 +65,15 @@ def test_dimension_without_unit_is_not_added():
     assert "Breite 240" not in title
 
 
+def test_unlabelled_incomplete_dimension_fragment_is_not_added():
+    title = build_shopify_title(
+        "Farbroller-Set Vestan Florhöhe 20 mm Kern-Ø 43 mm 6 mm mit Abstreifgitter",
+        description="Breite 240",
+        technical_data="",
+    )
+    assert "Breite 240" not in title
+
+
 def test_source_only_fallback_formats_model_without_inventing():
     title = build_shopify_title("Schraubendreher PH2", description="", technical_data="")
     assert title == "Schraubendreher – PH2"
