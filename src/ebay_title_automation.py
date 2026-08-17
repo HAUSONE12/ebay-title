@@ -14,10 +14,10 @@ import requests
 
 WAREHOUSE_ID = 128
 LANG = "de"
-EBAY_TITLE_LIMIT = 80
+SHOPIFY_TITLE_LIMIT = 120
+BASE_TITLE_BUDGET = 88
 STATE_FILE = Path("state/last_processed.json")
 
-# Terms that add no useful product information to an eBay title.
 NOISE_WORDS = {
     "artikel", "beschreibung", "produkt", "produkte", "weitere", "information",
     "informationen", "details", "technische", "daten", "eigenschaften", "merkmale",
@@ -33,7 +33,7 @@ DANGLING_WORDS = {
 DESCRIPTION_BAD_WORDS = {
     "ist", "sind", "war", "wird", "werden", "hat", "haben", "kann", "können", "koennen",
     "bietet", "bieten", "vereint", "ermöglicht", "ermoeglicht", "eignet", "geeignet",
-    "verfügt", "verfuegt", "sorgt", "besteht", "zeichnet",
+    "verfügt", "verfuegt", "sorgt", "besteht", "zeichnet", "ideal", "perfekt",
 }
 
 MATERIAL_TERMS = {
@@ -42,29 +42,37 @@ MATERIAL_TERMS = {
     "schaumstoff", "nylon", "textil", "baumwolle", "glasfaser", "carbon",
 }
 
-# Dimension labels are deliberately skipped as enrichment. In this catalogue they are often
-# flattened into unlabeled number sequences; dimensions already present in Name 1 remain intact.
 SKIP_LABELS = {
     "geeignet für", "geeignet fuer", "einsatzbereich", "anwendung", "beschreibung",
-    "hinweis", "hinweise", "lieferumfang", "verwendung", "weite",
-    "größe", "groesse", "maße", "masse", "abmessungen", "länge", "laenge", "breite",
-    "höhe", "hoehe", "durchmesser",
+    "hinweis", "hinweise", "lieferumfang", "verwendung",
 }
 
 LABEL_PRIORITIES = {
-    "gewicht": 100,
-    "kopfgewicht": 100,
-    "material": 90,
-    "werkstoff": 90,
-    "norm": 88,
-    "schutzklasse": 88,
-    "sicherheitsklasse": 88,
-    "farbe": 80,
-    "oberfläche": 75,
-    "oberflaeche": 75,
-    "ausführung": 70,
-    "ausfuehrung": 70,
-    "inhalt": 55,
+    "gewicht": 90,
+    "kopfgewicht": 92,
+    "material": 102,
+    "werkstoff": 102,
+    "norm": 98,
+    "schutzklasse": 98,
+    "sicherheitsklasse": 98,
+    "farbe": 88,
+    "oberfläche": 84,
+    "oberflaeche": 84,
+    "ausführung": 82,
+    "ausfuehrung": 82,
+    "größe": 75,
+    "groesse": 75,
+    "maße": 75,
+    "masse": 75,
+    "abmessungen": 75,
+    "länge": 72,
+    "laenge": 72,
+    "breite": 72,
+    "höhe": 72,
+    "hoehe": 72,
+    "durchmesser": 72,
+    "weite": 68,
+    "inhalt": 65,
 }
 
 KNOWN_LABEL_PATTERN = re.compile(
@@ -75,6 +83,22 @@ KNOWN_LABEL_PATTERN = re.compile(
     r"Durchmesser|Oberfläche|Oberflaeche|Ausführung|Ausfuehrung|Inhalt"
     r")\s*:"
 )
+
+DISPLAY_LABELS = {
+    "größe": "Größe",
+    "groesse": "Größe",
+    "maße": "Maße",
+    "masse": "Maße",
+    "abmessungen": "Maße",
+    "länge": "Länge",
+    "laenge": "Länge",
+    "breite": "Breite",
+    "höhe": "Höhe",
+    "hoehe": "Höhe",
+    "durchmesser": "Durchmesser",
+    "weite": "Weite",
+    "inhalt": "Inhalt",
+}
 
 
 def clean_text(value: str | None) -> str:
@@ -93,17 +117,16 @@ def clean_text(value: str | None) -> str:
 
 def normalize_title_chars(value: str) -> str:
     replacements = {
-        "®": "", "™": "", "©": "", "•": " ", "·": " ", "–": "-", "—": "-",
+        "®": "", "™": "", "©": "", "•": " ", "·": " ", "—": "-",
         "„": '"', "“": '"', "”": '"', "’": "'", "″": '"', "×": "x",
     }
     for old, new in replacements.items():
         value = value.replace(old, new)
-    # Keep common model/dimension punctuation, remove decorative symbols.
-    value = re.sub(r"[^\wÄÖÜäöüßØø0-9%+./,:()'\"xX\- ]+", " ", value)
+    value = re.sub(r"[^\wÄÖÜäöüßØø0-9%+./,:()'\"xX\-– ]+", " ", value)
     value = re.sub(r"\s+", " ", value)
     value = re.sub(r'(?<=\d)\s+"', '"', value)
     value = re.sub(r"\s+([,.:])", r"\1", value)
-    return value.strip(" -|,;:")
+    return value.strip(" -–|,;:")
 
 
 def token_key(token: str) -> str:
@@ -124,18 +147,29 @@ def strip_dangling_end(value: str) -> str:
     words = value.split()
     while words and token_key(words[-1]) in DANGLING_WORDS:
         words.pop()
-    return " ".join(words).rstrip(" -|,;:")
+    return " ".join(words).rstrip(" -–|,;:")
 
 
-def compact_name1(name1: str) -> str:
-    """Keep Name 1 authoritative, but shorten verbose field labels before clipping."""
+def clip_words(value: str, limit: int) -> str:
+    value = strip_dangling_end(value)
+    if len(value) <= limit:
+        return value
+    selected: list[str] = []
+    for word in value.split():
+        proposal = " ".join(selected + [word])
+        if len(proposal) > limit:
+            break
+        selected.append(word)
+    return strip_dangling_end(" ".join(selected))
+
+
+def compact_source_title(name1: str, limit: int = BASE_TITLE_BUDGET) -> str:
     base = normalize_title_chars(clean_text(name1))
     if not base:
         return ""
 
     replacements: list[tuple[str, str]] = [
         (r"\bRollenbreite\s+(?=\d)", ""),
-        (r"\bBreite\s+(?=\d)", ""),
         (r"\bFlorhöhe\s+(?=\d)", "Flor "),
         (r"\bKern-?\s*Ø\s*(?=\d)", "Kern Ø"),
         (r"\bBügellänge\s+(?=\d)", "Bügel "),
@@ -147,23 +181,14 @@ def compact_name1(name1: str) -> str:
         base = re.sub(pattern, replacement, base, flags=re.I)
     base = re.sub(r"\s+", " ", base).strip()
 
-    if len(base) <= EBAY_TITLE_LIMIT:
+    if len(base) <= limit:
         return strip_dangling_end(base)
 
-    # eBay titles are search-oriented; connector words can be dropped when space is tight.
-    base = base.replace(",", " ")
-    words = [w for w in base.split() if token_key(w) not in DANGLING_WORDS]
-    compact = " ".join(words)
-    if len(compact) <= EBAY_TITLE_LIMIT:
-        return strip_dangling_end(compact)
-
-    selected: list[str] = []
-    for word in words:
-        proposal = " ".join(selected + [word])
-        if len(proposal) > EBAY_TITLE_LIMIT:
-            break
-        selected.append(word)
-    return strip_dangling_end(" ".join(selected))[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
+    without_fillers = " ".join(
+        word for word in base.replace(",", " ").split()
+        if token_key(word) not in DANGLING_WORDS
+    )
+    return clip_words(without_fillers, limit)
 
 
 def normalize_label(label: str) -> str:
@@ -171,17 +196,16 @@ def normalize_label(label: str) -> str:
 
 
 def clean_candidate_value(value: str) -> str:
-    value = normalize_title_chars(value).strip(" -|,;:")
+    value = normalize_title_chars(value).strip(" -–|,;:")
     words = value.split()
     while words and token_key(words[0]) in DANGLING_WORDS:
         words.pop(0)
     while words and token_key(words[-1]) in DANGLING_WORDS:
         words.pop()
-    return " ".join(words).rstrip(" .,-|;:")
+    return " ".join(words).rstrip(" .,-–|;:")
 
 
 def base_german_descriptor(word: str) -> str:
-    """Convert common inflected adjective endings to compact search-keyword form."""
     lower = word.casefold()
     for suffix in ("em", "en", "er", "es", "e"):
         if len(word) >= 7 and lower.endswith(suffix):
@@ -190,7 +214,6 @@ def base_german_descriptor(word: str) -> str:
 
 
 def compact_material_value(value: str) -> str:
-    """Keep the actual material plus one descriptor and put the material keyword first."""
     words = useful_tokens(clean_candidate_value(value))
     for index, word in enumerate(words):
         if token_key(word) in MATERIAL_TERMS:
@@ -205,17 +228,27 @@ def source_segments(source: str) -> list[str]:
     cleaned = clean_text(source)
     if not cleaned:
         return []
-    # Some plentyONE HTML tables flatten adjacent labels into one line. Insert a boundary
-    # before known labels so "Material: ... Norm: ..." becomes two candidates.
     cleaned = KNOWN_LABEL_PATTERN.sub(lambda m: f" | {m.group(1)}:", cleaned)
     return [seg.strip() for seg in re.split(r"\s*\|\s*|\s*;\s*", cleaned) if seg.strip()]
 
 
+def format_structured_candidate(label: str, value: str) -> str:
+    if label in {"material", "werkstoff"}:
+        return compact_material_value(value)
+
+    value = clean_candidate_value(value)
+    if not value:
+        return ""
+
+    if label in DISPLAY_LABELS:
+        return f"{DISPLAY_LABELS[label]} {value}"
+    return value
+
+
 def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[int, int, str]]:
-    """Yield (priority, source_order, phrase) while rejecting prose and ambiguous fragments."""
     order = 0
     for source_kind, source_priority, source in (
-        ("technical", 10, technical_data),
+        ("technical", 12, technical_data),
         ("description", 0, description),
     ):
         for raw_segment in source_segments(source):
@@ -236,108 +269,107 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
             if label and label not in LABEL_PRIORITIES:
                 continue
             if source_kind == "technical" and not label:
-                # Unlabelled table values caused naked numbers such as "75 70 293 320".
                 continue
 
-            if label in {"material", "werkstoff"}:
-                value = compact_material_value(value)
+            if label:
+                phrase = format_structured_candidate(label, value)
             else:
-                value = clean_candidate_value(value)
-            if not value:
+                phrase = clean_candidate_value(value)
+            if not phrase:
                 continue
 
-            words = useful_tokens(value)
+            words = useful_tokens(phrase)
             if not words:
                 continue
 
             if source_kind == "description" and not label:
-                # Only short bullet-like feature phrases, never sentence fragments.
-                if len(words) < 2 or len(words) > 4:
+                if len(words) < 2 or len(words) > 5:
                     continue
                 if raw_segment.strip().endswith((".", "!", "?")):
                     continue
                 if any(token_key(word) in DESCRIPTION_BAD_WORDS for word in words):
                     continue
 
-            # Structured fields can be a little longer, but never paste a sentence into Name 2.
-            if label and len(words) > 6:
+            if label and len(words) > 7:
+                continue
+            if label == "norm" and not re.search(r"\b(?:DIN|EN|ISO|VDE|S[1-7]|SRC|ESD)\b", phrase, re.I):
+                continue
+            if label == "inhalt" and not re.search(r"\d", phrase):
+                continue
+            if re.fullmatch(r"\d+(?:[.,]\d+)?", phrase):
                 continue
 
-            if label == "norm" and not re.search(r"\b(?:DIN|EN|ISO|VDE|S[1-7]|SRC|ESD)\b", value, re.I):
+            numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", phrase)
+            if label != "norm" and len(numeric_tokens) > 3:
                 continue
 
-            if label == "inhalt" and not re.search(r"\d", value):
-                continue
-
-            # A naked number is not useful without its unit or context.
-            if re.fullmatch(r"\d+(?:[.,]\d+)?", value):
-                continue
-
-            numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", value)
-            if label != "norm" and len(numeric_tokens) > 2:
-                continue
-
-            phrase = " ".join(words)
-            priority = source_priority + LABEL_PRIORITIES.get(label, 45)
-            yield priority, order, phrase
+            priority = source_priority + LABEL_PRIORITIES.get(label, 50)
+            yield priority, order, " ".join(words)
 
 
-def build_ebay_title(name1: str, description: str = "", technical_data: str = "") -> str:
-    base = compact_name1(name1)
+def canonical_title(value: str) -> str:
+    return " ".join(token_key(word) for word in normalize_title_chars(value).split() if token_key(word))
+
+
+def build_shopify_title(name1: str, description: str = "", technical_data: str = "") -> str:
+    original = normalize_title_chars(clean_text(name1))
+    if not original:
+        return ""
+
+    candidates = sorted(candidate_segments(technical_data, description), key=lambda item: (-item[0], item[1]))
+    if not candidates:
+        return ""
+
+    base = compact_source_title(original)
     if not base:
         return ""
 
-    # If Name 1 needed compaction, it already contains the highest-value information we can
-    # safely preserve under the 80-character limit. Do not append extra data.
-    raw_base = normalize_title_chars(clean_text(name1))
-    if len(raw_base) > EBAY_TITLE_LIMIT:
-        return base
+    base_keys = {token_key(word) for word in base.split() if token_key(word)}
+    additions: list[str] = []
+    addition_keys: set[str] = set()
 
-    title_words = base.split()
-    seen = {token_key(t) for t in title_words if token_key(t)}
-
-    candidates = sorted(candidate_segments(technical_data, description), key=lambda x: (-x[0], x[1]))
-    added = 0
-    unit_keys = {"mm", "cm", "m", "g", "kg", "ml", "l", "v", "w"}
-    for priority, _order, phrase in candidates:
-        # Unlabelled description phrases are low priority and only enrich genuinely short names.
-        if priority <= 45 and len(base) >= 55:
-            continue
-
+    for _priority, _order, phrase in candidates:
         phrase_words = phrase.split()
-        novel_words = [w for w in phrase_words if token_key(w) and token_key(w) not in seen]
-        if not novel_words:
+        phrase_keys = {token_key(word) for word in phrase_words if token_key(word)}
+        known_keys = base_keys | addition_keys
+        if not phrase_keys or phrase_keys.issubset(known_keys):
             continue
 
-        novel_phrase = strip_dangling_end(" ".join(novel_words))
-        if not novel_phrase:
-            continue
-        if len(novel_phrase.split()) > 6:
-            continue
-        if priority <= 45 and len(novel_phrase.split()) < 2:
-            # Do not leave adjective/orphan fragments after a source phrase was de-duplicated.
+        # Low-priority description bullets must contribute a complete new phrase. This avoids
+        # results such as "Schwarz, schwarz lackiert" after the color was already added.
+        novel_words = [word for word in phrase_words if token_key(word) and token_key(word) not in known_keys]
+        if _priority <= 50 and len(novel_words) < 2:
             continue
 
-        # Do not add an orphan number after de-duplication removed its unit/context.
-        phrase_has_unit = any(token_key(w) in unit_keys for w in phrase_words)
-        novel_has_unit = any(token_key(w) in unit_keys for w in novel_phrase.split())
-        if re.search(r"\d", novel_phrase) and phrase_has_unit and not novel_has_unit:
+        proposal_additions = additions + [phrase]
+        proposal = f"{base} – {', '.join(proposal_additions)}"
+        if len(proposal) > SHOPIFY_TITLE_LIMIT:
             continue
 
-        proposal = f"{' '.join(title_words)} {novel_phrase}".strip()
-        if len(proposal) > EBAY_TITLE_LIMIT:
-            continue
-
-        title_words.extend(novel_phrase.split())
-        for word in novel_phrase.split():
-            key = token_key(word)
-            if key:
-                seen.add(key)
-        added += 1
-        if added >= 2 or len(" ".join(title_words)) >= EBAY_TITLE_LIMIT - 8:
+        additions.append(phrase)
+        addition_keys.update(phrase_keys)
+        if len(additions) >= 3:
             break
 
-    return strip_dangling_end(" ".join(title_words))[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
+    if not additions:
+        # Make some room for one high-value source-backed attribute rather than inventing content.
+        best_phrase = candidates[0][2]
+        smaller_base = compact_source_title(original, limit=76)
+        proposal = f"{smaller_base} – {best_phrase}" if smaller_base else ""
+        if proposal and len(proposal) <= SHOPIFY_TITLE_LIMIT:
+            additions = [best_phrase]
+            base = smaller_base
+        else:
+            return ""
+
+    title = normalize_title_chars(f"{base} – {', '.join(additions)}")
+    title = clip_words(title, SHOPIFY_TITLE_LIMIT)
+
+    # A Shopify title should not be a verbatim copy of the NORD WEST source title.
+    # If we cannot safely differentiate it with source-backed facts, leave it unchanged.
+    if canonical_title(title) == canonical_title(original):
+        return ""
+    return title
 
 
 @dataclass(frozen=True)
@@ -398,8 +430,6 @@ class PlentyClient:
                 except (KeyError, TypeError, ValueError):
                     continue
                 if physical > 0:
-                    # One article may have several stocked variations. Use a deterministic one
-                    # to address the shared item text record.
                     by_item[item_id] = min(variation_id, by_item.get(item_id, variation_id))
 
             if payload.get("isLastPage") is True:
@@ -411,7 +441,7 @@ class PlentyClient:
                 break
             page += 1
 
-        return [StockItem(item_id=k, variation_id=v) for k, v in sorted(by_item.items())]
+        return [StockItem(item_id=item_id, variation_id=variation_id) for item_id, variation_id in sorted(by_item.items())]
 
     def get_description(self, item_id: int, variation_id: int, lang: str = LANG) -> dict[str, Any]:
         response = self._request(
@@ -423,11 +453,11 @@ class PlentyClient:
             raise RuntimeError(f"Unexpected description payload for item {item_id}")
         return payload
 
-    def update_name2(self, item_id: int, variation_id: int, name2: str, lang: str = LANG) -> None:
+    def update_name1(self, item_id: int, variation_id: int, name1: str, lang: str = LANG) -> None:
         self._request(
             "PUT",
             f"/rest/items/{item_id}/variations/{variation_id}/descriptions/{lang}",
-            json={"itemId": item_id, "lang": lang, "name2": name2},
+            json={"itemId": item_id, "lang": lang, "name": name1},
         )
 
 
@@ -462,7 +492,7 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
     )
     client.login()
 
-    pending = [s for s in client.list_positive_stock() if s.item_id > checkpoint]
+    pending = [stock for stock in client.list_positive_stock() if stock.item_id > checkpoint]
     if max_items > 0:
         pending = pending[:max_items]
 
@@ -474,7 +504,6 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
         try:
             text = client.get_description(stock.item_id, stock.variation_id)
         except requests.HTTPError as exc:
-            # Missing German text should not permanently block all later IDs.
             if exc.response is not None and exc.response.status_code == 404:
                 print("SKIP: no German text record")
                 if not dry_run:
@@ -483,39 +512,42 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
                 continue
             raise
 
-        name1 = str(text.get("name") or "").strip()
-        if not name1:
+        source_name1 = str(text.get("name") or "").strip()
+        if not source_name1:
             print("SKIP: Name 1 is empty")
             if not dry_run:
                 save_state(stock.item_id)
             processed += 1
             continue
 
-        title = build_ebay_title(
-            name1=name1,
+        title = build_shopify_title(
+            name1=source_name1,
             description=str(text.get("description") or ""),
             technical_data=str(text.get("technicalData") or ""),
         )
         if not title:
-            print("SKIP: could not build title")
+            print("SKIP: no safe source-backed rewrite available")
             if not dry_run:
                 save_state(stock.item_id)
             processed += 1
             continue
 
-        current = str(text.get("name2") or "").strip()
-        print(f"Name 1 : {name1}")
-        print(f"Current: {current}")
-        print(f"Proposed ({len(title)} chars): {title}")
+        print(f"Source Name 1: {source_name1}")
+        print(f"Proposed Name 1 ({len(title)} chars): {title}")
 
         if dry_run:
             print("DRY RUN: no update, checkpoint unchanged")
         else:
-            if current == title:
-                print("UNCHANGED: Name 2 already matches")
+            if canonical_title(source_name1) == canonical_title(title):
+                print("UNCHANGED: Name 1 already matches")
             else:
-                client.update_name2(stock.item_id, stock.variation_id, title)
-                print("UPDATED: Name 2")
+                client.update_name1(stock.item_id, stock.variation_id, title)
+                verified = str(client.get_description(stock.item_id, stock.variation_id).get("name") or "").strip()
+                if canonical_title(verified) != canonical_title(title):
+                    raise RuntimeError(
+                        f"Name 1 verification failed for ArtikelID {stock.item_id}: expected {title!r}, got {verified!r}"
+                    )
+                print("UPDATED + VERIFIED: Name 1")
             save_state(stock.item_id)
 
         processed += 1
@@ -524,7 +556,9 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate eBay-style plentyONE Name 2 titles for NORD WEST stock")
+    parser = argparse.ArgumentParser(
+        description="Rewrite NORD WEST plentyONE Name 1 titles for Shopify using source-backed product facts"
+    )
     parser.add_argument("--dry-run", action="store_true", help="Do not update plentyONE or the checkpoint")
     parser.add_argument("--max-items", type=int, default=0, help="Limit number of articles; 0 means all")
     return parser.parse_args()
