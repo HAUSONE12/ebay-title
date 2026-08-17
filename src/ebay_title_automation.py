@@ -148,7 +148,7 @@ def compact_name1(name1: str) -> str:
         (r"\bBügellänge\s+(?=\d)", "Bügel "),
         (r"\bBügel-?\s*Ø\s*(?=\d)", "Bügel Ø"),
         (r"\bSchlüsselweiten\s+(?=\d)", "SW "),
-        (r"\bAnzahl\s+Zähne\s+(\d+)", r"\1 Zähne"),
+        (r"\bAnzahl\s+Zähne\s+([\d/]+)", r"\1 Zähne"),
     ]
     for pattern, replacement in replacements:
         base = re.sub(pattern, replacement, base, flags=re.I)
@@ -185,6 +185,19 @@ def clean_candidate_value(value: str) -> str:
     while words and token_key(words[-1]) in DANGLING_WORDS:
         words.pop()
     return " ".join(words).rstrip(" .,-|;:")
+
+
+def compact_material_value(value: str) -> str:
+    """Keep the actual material plus at most one descriptor; drop prose flattened after it."""
+    words = useful_tokens(clean_candidate_value(value))
+    for index, word in enumerate(words):
+        if token_key(word) in MATERIAL_TERMS:
+            start = max(0, index - 1)
+            selected = words[start : index + 1]
+            if selected and token_key(selected[0]) in DANGLING_WORDS:
+                selected = selected[1:]
+            return " ".join(selected)
+    return ""
 
 
 def source_segments(source: str) -> list[str]:
@@ -225,7 +238,10 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
                 # Unlabelled table values caused naked numbers such as "75 70 293 320".
                 continue
 
-            value = clean_candidate_value(value)
+            if label in {"material", "werkstoff"}:
+                value = compact_material_value(value)
+            else:
+                value = clean_candidate_value(value)
             if not value:
                 continue
 
@@ -256,12 +272,13 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
             if re.fullmatch(r"\d+(?:[.,]\d+)?", value):
                 continue
 
+            numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", value)
+            if label != "norm" and len(numeric_tokens) > 2:
+                # Reject flattened dimension/table rows instead of injecting ambiguous numbers.
+                continue
+
             if label in {"breite", "höhe", "hoehe", "länge", "laenge", "durchmesser", "maße", "masse", "abmessungen", "größe", "groesse"}:
                 if re.fullmatch(r"[\d\s.,xX+/-]+", value):
-                    continue
-
-            if label in {"material", "werkstoff"} and len(words) == 1:
-                if token_key(words[0]) not in MATERIAL_TERMS:
                     continue
 
             phrase = " ".join(words)
