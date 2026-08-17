@@ -1,4 +1,4 @@
-name: Daily eBay Name 2
+name: Daily Shopify Name 1
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Preview titles without writing to plentyONE"
+        description: "Preview rewritten Name 1 titles without writing to plentyONE"
         required: true
         default: true
         type: boolean
@@ -20,11 +20,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: ebay-name2-daily
+  group: shopify-name1-daily
   cancel-in-progress: false
 
 jobs:
-  update-name2:
+  update-name1:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
