@@ -46,6 +46,14 @@ def test_dimensions_keep_their_context():
     assert "Polyacryl" in title
 
 
+def test_repeated_unit_is_preserved_in_added_dimension():
+    title = build_shopify_title(
+        "Farbroller-Set Vestan Florhöhe 20 mm Kern-Ø 43 mm 6 mm mit Abstreifgitter",
+        technical_data="Breite: 240 mm",
+    )
+    assert "Breite 240 mm" in title
+
+
 def test_ambiguous_dimension_sequences_are_not_added():
     title = build_shopify_title(
         "Lackwanne ERGOLINE grau Polypropylen",
