@@ -1,0 +1,39 @@
+name: One-time Plenty dry run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/test-once.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PLENTY_BASE_URL: ${{ secrets.PLENTY_BASE_URL }}
+      PLENTY_USERNAME: ${{ secrets.PLENTY_USERNAME }}
+      PLENTY_PASSWORD: ${{ secrets.PLENTY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Preview first 20 titles
+        run: python -m src.ebay_title_automation --dry-run --max-items 20
