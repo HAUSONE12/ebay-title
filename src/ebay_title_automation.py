@@ -305,6 +305,8 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
 
             numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", phrase)
             if label in DIMENSION_LABELS:
+                if not re.search(r"(?:\bmm\b|\bcm\b|\bm\b|\d\")", phrase, re.I):
+                    continue
                 has_dimension_pair = bool(re.search(r"\d+(?:[.,]\d+)?\s*[xX]\s*\d+(?:[.,]\d+)?", phrase))
                 if len(numeric_tokens) > 1 and not has_dimension_pair:
                     continue
@@ -337,15 +339,25 @@ def fallback_rewrite(name1: str) -> str:
                 return candidate
 
     if len(words) >= 3:
+        first_letters = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", words[0])
+        if len(first_letters) >= 3 and first_letters.upper() == first_letters:
+            candidate = clip_words(f"{' '.join(words[1:])} – {words[0]}", SHOPIFY_TITLE_LIMIT)
+            if canonical_title(candidate) != canonical_title(original):
+                return candidate
+
         last = words[-1]
-        letters = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", last)
-        if len(letters) >= 3 and letters.upper() == letters:
+        last_letters = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", last)
+        if len(last_letters) >= 3 and last_letters.upper() == last_letters:
             candidate = clip_words(f"{last} {' '.join(words[:-1])}", SHOPIFY_TITLE_LIMIT)
             if canonical_title(candidate) != canonical_title(original):
                 return candidate
 
     if canonical_title(compact) != canonical_title(original):
         return compact
+
+    if len(words) >= 2:
+        # Last-resort formatting change: preserves every source word and introduces no facts.
+        return clip_words(f"{words[0]} – {' '.join(words[1:])}", SHOPIFY_TITLE_LIMIT)
     return ""
 
 
@@ -560,11 +572,8 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
             technical_data=str(text.get("technicalData") or ""),
         )
         if not title:
-            print("SKIP: no safe source-backed rewrite available")
-            if not dry_run:
-                save_state(stock.item_id)
-            processed += 1
-            continue
+            title = normalize_title_chars(source_name1)
+            print("FALLBACK: no safe rewrite available; Name 1 and Name 2 will be synchronized to the source title")
 
         print(f"Source Name 1: {source_name1}")
         print(f"Current Name 2: {current_name2}")
