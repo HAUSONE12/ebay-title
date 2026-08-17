@@ -180,16 +180,24 @@ def clean_candidate_value(value: str) -> str:
     return " ".join(words).rstrip(" .,-|;:")
 
 
+def base_german_descriptor(word: str) -> str:
+    """Convert common inflected adjective endings to compact search-keyword form."""
+    lower = word.casefold()
+    for suffix in ("em", "en", "er", "es", "e"):
+        if len(word) >= 7 and lower.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
+
+
 def compact_material_value(value: str) -> str:
-    """Keep the actual material plus at most one descriptor; drop prose flattened after it."""
+    """Keep the actual material plus one descriptor and put the material keyword first."""
     words = useful_tokens(clean_candidate_value(value))
     for index, word in enumerate(words):
         if token_key(word) in MATERIAL_TERMS:
-            start = max(0, index - 1)
-            selected = words[start : index + 1]
-            if selected and token_key(selected[0]) in DANGLING_WORDS:
-                selected = selected[1:]
-            return " ".join(selected)
+            if index > 0 and token_key(words[index - 1]) not in DANGLING_WORDS:
+                descriptor = base_german_descriptor(words[index - 1])
+                return f"{word} {descriptor}".strip()
+            return word
     return ""
 
 
@@ -305,6 +313,9 @@ def build_ebay_title(name1: str, description: str = "", technical_data: str = ""
         if not novel_phrase:
             continue
         if len(novel_phrase.split()) > 6:
+            continue
+        if priority <= 45 and len(novel_phrase.split()) < 2:
+            # Do not leave adjective/orphan fragments after a source phrase was de-duplicated.
             continue
 
         # Do not add an orphan number after de-duplication removed its unit/context.
