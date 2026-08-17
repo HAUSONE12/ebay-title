@@ -57,13 +57,32 @@ def test_ambiguous_dimension_sequences_are_not_added():
     assert "160 mm 270 mm" not in title
 
 
-def test_no_rewrite_when_no_safe_enrichment_exists():
-    assert build_shopify_title("Schraubendreher PH2", description="", technical_data="") == ""
+def test_dimension_without_unit_is_not_added():
+    title = build_shopify_title(
+        "Farbroller-Set Vestan Florhöhe 20 mm",
+        technical_data="Breite: 240",
+    )
+    assert "Breite 240" not in title
+
+
+def test_source_only_fallback_formats_model_without_inventing():
+    title = build_shopify_title("Schraubendreher PH2", description="", technical_data="")
+    assert title == "Schraubendreher – PH2"
 
 
 def test_source_only_fallback_reorders_piece_count_without_inventing():
     title = build_shopify_title("Schraubendreher-Satz 7-teilig", description="", technical_data="")
     assert title == "7-teilig Schraubendreher-Satz"
+
+
+def test_leading_brand_fallback_changes_order_without_inventing():
+    title = build_shopify_title(
+        "PICARD Betonschalmeister 650 Kopfgewicht 600 g geraut Stahlrohrstiel mit 2K-Griff",
+        description="",
+        technical_data="",
+    )
+    assert title.endswith("– PICARD")
+    assert "Betonschalmeister" in title
 
 
 def test_sentence_marketing_copy_is_not_used():
