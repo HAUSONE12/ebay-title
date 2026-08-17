@@ -96,6 +96,7 @@ def normalize_title_chars(value: str) -> str:
     # Keep common model/dimension punctuation, remove decorative symbols.
     value = re.sub(r"[^\wÄÖÜäöüßØø0-9%+./,:()'\"xX\- ]+", " ", value)
     value = re.sub(r"\s+", " ", value)
+    value = re.sub(r'(?<=\d)\s+"', '"', value)
     value = re.sub(r"\s+([,.:])", r"\1", value)
     return value.strip(" -|,;:")
 
