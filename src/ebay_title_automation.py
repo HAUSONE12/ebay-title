@@ -365,8 +365,8 @@ def build_shopify_title(name1: str, description: str = "", technical_data: str =
     title = normalize_title_chars(f"{base} – {', '.join(additions)}")
     title = clip_words(title, SHOPIFY_TITLE_LIMIT)
 
-    # A Shopify title should not be a verbatim copy of the NORD WEST source title.
-    # If we cannot safely differentiate it with source-backed facts, leave it unchanged.
+    # The Shopify title should not be a verbatim copy of the NORD WEST source title.
+    # If it cannot be safely differentiated with source-backed facts, leave the item unchanged.
     if canonical_title(title) == canonical_title(original):
         return ""
     return title
@@ -453,11 +453,11 @@ class PlentyClient:
             raise RuntimeError(f"Unexpected description payload for item {item_id}")
         return payload
 
-    def update_name1(self, item_id: int, variation_id: int, name1: str, lang: str = LANG) -> None:
+    def update_titles(self, item_id: int, variation_id: int, title: str, lang: str = LANG) -> None:
         self._request(
             "PUT",
             f"/rest/items/{item_id}/variations/{variation_id}/descriptions/{lang}",
-            json={"itemId": item_id, "lang": lang, "name": name1},
+            json={"itemId": item_id, "lang": lang, "name": title, "name2": title},
         )
 
 
@@ -513,6 +513,7 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
             raise
 
         source_name1 = str(text.get("name") or "").strip()
+        current_name2 = str(text.get("name2") or "").strip()
         if not source_name1:
             print("SKIP: Name 1 is empty")
             if not dry_run:
@@ -533,21 +534,32 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
             continue
 
         print(f"Source Name 1: {source_name1}")
-        print(f"Proposed Name 1 ({len(title)} chars): {title}")
+        print(f"Current Name 2: {current_name2}")
+        print(f"Proposed Name 1 + Name 2 ({len(title)} chars): {title}")
 
         if dry_run:
             print("DRY RUN: no update, checkpoint unchanged")
         else:
-            if canonical_title(source_name1) == canonical_title(title):
-                print("UNCHANGED: Name 1 already matches")
+            already_same = (
+                canonical_title(source_name1) == canonical_title(title)
+                and canonical_title(current_name2) == canonical_title(title)
+            )
+            if already_same:
+                print("UNCHANGED: Name 1 and Name 2 already match the generated title")
             else:
-                client.update_name1(stock.item_id, stock.variation_id, title)
-                verified = str(client.get_description(stock.item_id, stock.variation_id).get("name") or "").strip()
-                if canonical_title(verified) != canonical_title(title):
+                client.update_titles(stock.item_id, stock.variation_id, title)
+                verified_text = client.get_description(stock.item_id, stock.variation_id)
+                verified_name1 = str(verified_text.get("name") or "").strip()
+                verified_name2 = str(verified_text.get("name2") or "").strip()
+                if (
+                    canonical_title(verified_name1) != canonical_title(title)
+                    or canonical_title(verified_name2) != canonical_title(title)
+                ):
                     raise RuntimeError(
-                        f"Name 1 verification failed for ArtikelID {stock.item_id}: expected {title!r}, got {verified!r}"
+                        f"Title verification failed for ArtikelID {stock.item_id}: "
+                        f"expected both fields {title!r}, got Name 1={verified_name1!r}, Name 2={verified_name2!r}"
                     )
-                print("UPDATED + VERIFIED: Name 1")
+                print("UPDATED + VERIFIED: Name 1 = Name 2")
             save_state(stock.item_id)
 
         processed += 1
@@ -557,7 +569,7 @@ def run(dry_run: bool = False, max_items: int = 0) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rewrite NORD WEST plentyONE Name 1 titles for Shopify using source-backed product facts"
+        description="Rewrite NORD WEST plentyONE titles for Shopify and keep Name 1 and Name 2 identical"
     )
     parser.add_argument("--dry-run", action="store_true", help="Do not update plentyONE or the checkpoint")
     parser.add_argument("--max-items", type=int, default=0, help="Limit number of articles; 0 means all")
