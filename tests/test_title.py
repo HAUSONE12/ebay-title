@@ -1,4 +1,5 @@
 from src.ebay_title_automation import (
+    PlentyClient,
     SHOPIFY_TITLE_LIMIT,
     build_shopify_title,
     clean_text,
@@ -76,6 +77,24 @@ def test_duplicate_source_facts_do_not_prevent_new_fact():
     )
     assert "Rot" in title
     assert title != "Hammer Stahl 500 g"
+
+
+def test_update_titles_writes_identical_name1_and_name2(monkeypatch):
+    client = PlentyClient("https://example.invalid", "user", "pass")
+    captured = {}
+
+    def fake_request(method, path, **kwargs):
+        captured["method"] = method
+        captured["path"] = path
+        captured["json"] = kwargs["json"]
+        return object()
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.update_titles(123, 456, "Neuer Shopify Titel")
+
+    assert captured["method"] == "PUT"
+    assert captured["json"]["name"] == "Neuer Shopify Titel"
+    assert captured["json"]["name2"] == "Neuer Shopify Titel"
 
 
 def test_empty_name_returns_empty_title():
