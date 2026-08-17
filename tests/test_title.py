@@ -19,7 +19,7 @@ def test_shopify_title_is_source_backed_and_different():
     )
     assert title
     assert title != source
-    assert title.startswith("Gipserbeil")
+    assert "Gipserbeil" in title
     assert "PROMAT" in title
     assert any(term in title for term in ("Schwarz", "geraute Bahn", "Stiftsicherung"))
     assert len(title) <= SHOPIFY_TITLE_LIMIT
@@ -46,8 +46,24 @@ def test_dimensions_keep_their_context():
     assert "Polyacryl" in title
 
 
+def test_ambiguous_dimension_sequences_are_not_added():
+    title = build_shopify_title(
+        "Lackwanne ERGOLINE grau Polypropylen",
+        description="Material: bruchfestem Polypropylen",
+        technical_data="Höhe: 40 mm 35 mm; Breite: 160 mm 270 mm",
+    )
+    assert "bruchfest" in title
+    assert "40 mm 35 mm" not in title
+    assert "160 mm 270 mm" not in title
+
+
 def test_no_rewrite_when_no_safe_enrichment_exists():
     assert build_shopify_title("Schraubendreher PH2", description="", technical_data="") == ""
+
+
+def test_source_only_fallback_reorders_piece_count_without_inventing():
+    title = build_shopify_title("Schraubendreher-Satz 7-teilig", description="", technical_data="")
+    assert title == "7-teilig Schraubendreher-Satz"
 
 
 def test_sentence_marketing_copy_is_not_used():
