@@ -42,25 +42,18 @@ MATERIAL_TERMS = {
     "schaumstoff", "nylon", "textil", "baumwolle", "glasfaser", "carbon",
 }
 
+# Dimension labels are deliberately skipped as enrichment. In this catalogue they are often
+# flattened into unlabeled number sequences; dimensions already present in Name 1 remain intact.
 SKIP_LABELS = {
     "geeignet für", "geeignet fuer", "einsatzbereich", "anwendung", "beschreibung",
     "hinweis", "hinweise", "lieferumfang", "verwendung", "weite",
+    "größe", "groesse", "maße", "masse", "abmessungen", "länge", "laenge", "breite",
+    "höhe", "hoehe", "durchmesser",
 }
 
 LABEL_PRIORITIES = {
     "gewicht": 100,
     "kopfgewicht": 100,
-    "größe": 95,
-    "groesse": 95,
-    "maße": 95,
-    "masse": 95,
-    "abmessungen": 95,
-    "länge": 95,
-    "laenge": 95,
-    "breite": 95,
-    "höhe": 95,
-    "hoehe": 95,
-    "durchmesser": 95,
     "material": 90,
     "werkstoff": 90,
     "norm": 88,
@@ -274,12 +267,7 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
 
             numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", value)
             if label != "norm" and len(numeric_tokens) > 2:
-                # Reject flattened dimension/table rows instead of injecting ambiguous numbers.
                 continue
-
-            if label in {"breite", "höhe", "hoehe", "länge", "laenge", "durchmesser", "maße", "masse", "abmessungen", "größe", "groesse"}:
-                if re.fullmatch(r"[\d\s.,xX+/-]+", value):
-                    continue
 
             phrase = " ".join(words)
             priority = source_priority + LABEL_PRIORITIES.get(label, 45)
@@ -302,6 +290,7 @@ def build_ebay_title(name1: str, description: str = "", technical_data: str = ""
 
     candidates = sorted(candidate_segments(technical_data, description), key=lambda x: (-x[0], x[1]))
     added = 0
+    unit_keys = {"mm", "cm", "m", "g", "kg", "ml", "l", "v", "w"}
     for priority, _order, phrase in candidates:
         # Unlabelled description phrases are low priority and only enrich genuinely short names.
         if priority <= 45 and len(base) >= 55:
@@ -318,6 +307,12 @@ def build_ebay_title(name1: str, description: str = "", technical_data: str = ""
         if len(novel_phrase.split()) > 6:
             continue
 
+        # Do not add an orphan number after de-duplication removed its unit/context.
+        phrase_has_unit = any(token_key(w) in unit_keys for w in phrase_words)
+        novel_has_unit = any(token_key(w) in unit_keys for w in novel_phrase.split())
+        if re.search(r"\d", novel_phrase) and phrase_has_unit and not novel_has_unit:
+            continue
+
         proposal = f"{' '.join(title_words)} {novel_phrase}".strip()
         if len(proposal) > EBAY_TITLE_LIMIT:
             continue
@@ -328,7 +323,7 @@ def build_ebay_title(name1: str, description: str = "", technical_data: str = ""
             if key:
                 seen.add(key)
         added += 1
-        if added >= 3 or len(" ".join(title_words)) >= EBAY_TITLE_LIMIT - 8:
+        if added >= 2 or len(" ".join(title_words)) >= EBAY_TITLE_LIMIT - 8:
             break
 
     return strip_dangling_end(" ".join(title_words))[:EBAY_TITLE_LIMIT].rstrip(" -|,;:")
@@ -418,7 +413,6 @@ class PlentyClient:
         return payload
 
     def update_name2(self, item_id: int, variation_id: int, name2: str, lang: str = LANG) -> None:
-        # plentyONE requires itemId and lang in the body for the text update route.
         self._request(
             "PUT",
             f"/rest/items/{item_id}/variations/{variation_id}/descriptions/{lang}",
