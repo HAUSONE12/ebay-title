@@ -44,7 +44,7 @@ MATERIAL_TERMS = {
 
 SKIP_LABELS = {
     "geeignet für", "geeignet fuer", "einsatzbereich", "anwendung", "beschreibung",
-    "hinweis", "hinweise", "lieferumfang", "verwendung",
+    "hinweis", "hinweise", "lieferumfang", "verwendung", "weite",
 }
 
 LABEL_PRIORITIES = {
@@ -60,19 +60,18 @@ LABEL_PRIORITIES = {
     "oberflaeche": 84,
     "ausführung": 82,
     "ausfuehrung": 82,
-    "größe": 75,
-    "groesse": 75,
-    "maße": 75,
-    "masse": 75,
-    "abmessungen": 75,
-    "länge": 72,
-    "laenge": 72,
-    "breite": 72,
-    "höhe": 72,
-    "hoehe": 72,
-    "durchmesser": 72,
-    "weite": 68,
     "inhalt": 65,
+    "größe": 35,
+    "groesse": 35,
+    "maße": 35,
+    "masse": 35,
+    "abmessungen": 35,
+    "länge": 35,
+    "laenge": 35,
+    "breite": 35,
+    "höhe": 35,
+    "hoehe": 35,
+    "durchmesser": 35,
 }
 
 KNOWN_LABEL_PATTERN = re.compile(
@@ -96,8 +95,12 @@ DISPLAY_LABELS = {
     "höhe": "Höhe",
     "hoehe": "Höhe",
     "durchmesser": "Durchmesser",
-    "weite": "Weite",
     "inhalt": "Inhalt",
+}
+
+DIMENSION_LABELS = {
+    "größe", "groesse", "maße", "masse", "abmessungen", "länge", "laenge",
+    "breite", "höhe", "hoehe", "durchmesser",
 }
 
 
@@ -176,6 +179,7 @@ def compact_source_title(name1: str, limit: int = BASE_TITLE_BUDGET) -> str:
         (r"\bBügel-?\s*Ø\s*(?=\d)", "Bügel Ø"),
         (r"\bSchlüsselweiten\s+(?=\d)", "SW "),
         (r"\bAnzahl\s+Zähne\s+([\d/]+)", r"\1 Zähne"),
+        (r"\bInhalt\s+(?=\d+-teilig\b)", ""),
     ]
     for pattern, replacement in replacements:
         base = re.sub(pattern, replacement, base, flags=re.I)
@@ -300,7 +304,13 @@ def candidate_segments(technical_data: str, description: str) -> Iterable[tuple[
                 continue
 
             numeric_tokens = re.findall(r"(?<![A-Za-zÄÖÜäöüß])\d+(?:[.,]\d+)?(?![A-Za-zÄÖÜäöüß])", phrase)
-            if label != "norm" and len(numeric_tokens) > 3:
+            if label in DIMENSION_LABELS:
+                has_dimension_pair = bool(re.search(r"\d+(?:[.,]\d+)?\s*[xX]\s*\d+(?:[.,]\d+)?", phrase))
+                if len(numeric_tokens) > 1 and not has_dimension_pair:
+                    continue
+                if len(numeric_tokens) > 2:
+                    continue
+            elif label != "norm" and len(numeric_tokens) > 3:
                 continue
 
             priority = source_priority + LABEL_PRIORITIES.get(label, 50)
@@ -311,64 +321,87 @@ def canonical_title(value: str) -> str:
     return " ".join(token_key(word) for word in normalize_title_chars(value).split() if token_key(word))
 
 
+def fallback_rewrite(name1: str) -> str:
+    """Create a source-only rewrite when no useful enrichment is available."""
+    original = normalize_title_chars(clean_text(name1))
+    compact = compact_source_title(original, limit=SHOPIFY_TITLE_LIMIT)
+    if not compact:
+        return ""
+
+    words = compact.split()
+    for index, word in enumerate(words[1:], start=1):
+        if re.fullmatch(r"\d+(?:[/-]\d+)?-teilig", word, re.I):
+            candidate = " ".join([word] + words[:index] + words[index + 1 :])
+            candidate = clip_words(candidate, SHOPIFY_TITLE_LIMIT)
+            if canonical_title(candidate) != canonical_title(original):
+                return candidate
+
+    if len(words) >= 3:
+        last = words[-1]
+        letters = re.sub(r"[^A-Za-zÄÖÜäöüß]", "", last)
+        if len(letters) >= 3 and letters.upper() == letters:
+            candidate = clip_words(f"{last} {' '.join(words[:-1])}", SHOPIFY_TITLE_LIMIT)
+            if canonical_title(candidate) != canonical_title(original):
+                return candidate
+
+    if canonical_title(compact) != canonical_title(original):
+        return compact
+    return ""
+
+
 def build_shopify_title(name1: str, description: str = "", technical_data: str = "") -> str:
     original = normalize_title_chars(clean_text(name1))
     if not original:
         return ""
 
     candidates = sorted(candidate_segments(technical_data, description), key=lambda item: (-item[0], item[1]))
-    if not candidates:
-        return ""
-
     base = compact_source_title(original)
     if not base:
         return ""
+    if not candidates:
+        return fallback_rewrite(original)
 
     base_keys = {token_key(word) for word in base.split() if token_key(word)}
     additions: list[str] = []
     addition_keys: set[str] = set()
+    long_base = len(base) >= 70
 
-    for _priority, _order, phrase in candidates:
+    for priority, _order, phrase in candidates:
+        if long_base and priority < 80:
+            continue
+
         phrase_words = phrase.split()
         phrase_keys = {token_key(word) for word in phrase_words if token_key(word)}
         known_keys = base_keys | addition_keys
         if not phrase_keys or phrase_keys.issubset(known_keys):
             continue
 
-        # Low-priority description bullets must contribute a complete new phrase. This avoids
-        # results such as "Schwarz, schwarz lackiert" after the color was already added.
         novel_words = [word for word in phrase_words if token_key(word) and token_key(word) not in known_keys]
-        if _priority <= 50 and len(novel_words) < 2:
+        if priority <= 50 and len(novel_words) < 2:
             continue
 
-        proposal_additions = additions + [phrase]
+        novel_phrase = strip_dangling_end(" ".join(novel_words))
+        if not novel_phrase:
+            continue
+
+        proposal_additions = additions + [novel_phrase]
         proposal = f"{base} – {', '.join(proposal_additions)}"
         if len(proposal) > SHOPIFY_TITLE_LIMIT:
             continue
 
-        additions.append(phrase)
-        addition_keys.update(phrase_keys)
+        additions.append(novel_phrase)
+        addition_keys.update(token_key(word) for word in novel_words if token_key(word))
         if len(additions) >= 3:
             break
 
     if not additions:
-        # Make some room for one high-value source-backed attribute rather than inventing content.
-        best_phrase = candidates[0][2]
-        smaller_base = compact_source_title(original, limit=76)
-        proposal = f"{smaller_base} – {best_phrase}" if smaller_base else ""
-        if proposal and len(proposal) <= SHOPIFY_TITLE_LIMIT:
-            additions = [best_phrase]
-            base = smaller_base
-        else:
-            return ""
+        return fallback_rewrite(original)
 
     title = normalize_title_chars(f"{base} – {', '.join(additions)}")
     title = clip_words(title, SHOPIFY_TITLE_LIMIT)
 
-    # The Shopify title should not be a verbatim copy of the NORD WEST source title.
-    # If it cannot be safely differentiated with source-backed facts, leave the item unchanged.
     if canonical_title(title) == canonical_title(original):
-        return ""
+        return fallback_rewrite(original)
     return title
 
 
