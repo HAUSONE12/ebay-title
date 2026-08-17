@@ -1,4 +1,4 @@
-name: Daily Shopify Name 1
+name: Daily Shopify Name 1 + Name 2
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Preview rewritten Name 1 titles without writing to plentyONE"
+        description: "Preview rewritten Name 1 + Name 2 titles without writing to plentyONE"
         required: true
         default: true
         type: boolean
@@ -20,11 +20,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: shopify-name1-daily
+  group: shopify-name1-name2-daily
   cancel-in-progress: false
 
 jobs:
-  update-name1:
+  update-titles:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
