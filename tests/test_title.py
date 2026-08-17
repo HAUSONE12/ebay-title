@@ -35,7 +35,7 @@ def test_structured_labels_are_not_copied_into_title():
     assert "Material:" not in title
     assert "Norm:" not in title
     assert "Einsatzbereich" not in title
-    assert "lackiertem Stahl" in title
+    assert "Stahl lackiert" in title
     assert "DIN EN 131" in title
 
 
@@ -57,6 +57,23 @@ def test_dimension_heavy_name_is_compacted_for_search():
     assert "SW 10-32 mm" in title
     assert "36 Zähne" in title
     assert "6-Kant" in title
+
+
+def test_multi_ratchet_tooth_counts_are_preserved():
+    title = build_ebay_title(
+        'Steckschlüssel-Satz 55-teilig 1/4 + 1/2 ″ Schlüsselweiten 4-32 mm Anzahl Zähne 20/36 6-Kant'
+    )
+    assert "20/36 Zähne" in title
+    assert len(title) <= 80
+
+
+def test_duplicate_material_does_not_leave_orphan_adjective():
+    title = build_ebay_title(
+        "Lackwanne ERGOLINE grau Polypropylen",
+        description="aus bruchfestem Polypropylen",
+        technical_data="",
+    )
+    assert title == "Lackwanne ERGOLINE grau Polypropylen"
 
 
 def test_empty_name_returns_empty_title():
