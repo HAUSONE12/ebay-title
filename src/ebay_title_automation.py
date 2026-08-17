@@ -34,6 +34,8 @@ DESCRIPTION_BAD_WORDS = {
     "ist", "sind", "war", "wird", "werden", "hat", "haben", "kann", "können", "koennen",
     "bietet", "bieten", "vereint", "ermöglicht", "ermoeglicht", "eignet", "geeignet",
     "verfügt", "verfuegt", "sorgt", "besteht", "zeichnet", "ideal", "perfekt",
+    "breite", "höhe", "hoehe", "länge", "laenge", "durchmesser", "maße", "masse",
+    "abmessungen", "weite",
 }
 
 MATERIAL_TERMS = {
@@ -356,7 +358,6 @@ def fallback_rewrite(name1: str) -> str:
         return compact
 
     if len(words) >= 2:
-        # Last-resort formatting change: preserves every source word and introduces no facts.
         return clip_words(f"{words[0]} – {' '.join(words[1:])}", SHOPIFY_TITLE_LIMIT)
     return ""
 
