@@ -5,7 +5,7 @@ on:
     paths:
       - ".github/workflows/test-name1.yml"
 
-# Final validation after filtering incomplete description dimensions.
+# Validation after preserving units in de-duplicated attributes.
 jobs:
   dry-run:
     runs-on: ubuntu-latest
