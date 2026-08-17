@@ -1,4 +1,4 @@
-name: One-time Shopify Name 1 dry run
+name: One-time Shopify Name 1 + Name 2 dry run
 
 on:
   push:
