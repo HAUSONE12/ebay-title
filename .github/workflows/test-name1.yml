@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/test-name1.yml"
 
+# One-time validation for the refined title builder.
 jobs:
   dry-run:
     runs-on: ubuntu-latest
